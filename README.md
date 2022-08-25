@@ -8,7 +8,7 @@ __Fig. a is a schematic diagram of DHC-GEP__. Initial population is created with
 
 ![cesjo](figures/DHC-GEP_Gene.png)
 
-__Fig. c is a strategy of dimensional verification__: first assign prime number tags to the base dimensions and derive the tags for the derived variables, then calculate the dimension of each node in the expression tree from the bottom up, finally compare the tag of the root node with that of the target variable. If they are the same, it can be concluded that the certain individual is dimensional homogeneous.
+__Fig. c shows the strategy of dimensional verification__: first assign prime number tags to the base dimensions and derive the tags for the derived variables, then calculate the dimension of each node in the expression tree from the bottom up, finally compare the tag of the root node with that of the target variable. If they are the same, it can be concluded that the certain individual is dimensional homogeneous.
 
 ![cesjo](figures/Dimensional_verification.png)
 
