@@ -32,7 +32,7 @@ The scripts are in the corresponding dictionaries. One can run the desired scrip
 
 The best equations of each generation are output in real time to a '.dat' file in the 'Output' dictionary. The latest population is saved every 20 generations to a '.pkl' file in the 'pkl' dictionary for ease of subsequent restarting if necessary. 
 
-## How to assign number tags for the imported terminals
+## How to run  your cases
 If someone wants to employ DHC-GEP in other problems, one should reassign number tags for the imported terminals. This is implemented in the following codes. One can redefine 'dict_of_dimension' as needed. Key is the name of imported terminal. Value is the corresponding number tag.
 ```
 # Assign prime number tags to base dimensions
