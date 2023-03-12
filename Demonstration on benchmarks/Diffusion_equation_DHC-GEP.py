@@ -33,7 +33,8 @@ rho_yy = rho_yy[train_point_index,:]
 rho_3y = rho_3y[train_point_index,:]
 Y = Y[train_point_index,:]
 
-diffusion_coef = 2.468e-05 # Diffusion coefficient
+diffusion_coef = 1.399e-05 # Diffusion coefficient
+miu = 2.079e-5 # Viscosity coefficient
 # Y = rho_yy * diffusion_coef # If using fully clean data
 
 # %% Assign number tags
@@ -48,7 +49,8 @@ dict_of_dimension = {'rho':Fraction(M,((L)**(3))),
                      'rho_y':Fraction(M,((L)**(4))),
                      'rho_yy':Fraction(M,((L)**(5))),
                      'rho_3y':Fraction(M,((L)**(6))),
-                     'df_c':Fraction((L**2),T)} 
+                     'df_c':Fraction((L**2),T),
+                     'Miu':Fraction(M,L*T)} 
 
 # Assign number tags to taget variable
 target_dimension = Fraction(M,T*((L)**(3)))
@@ -63,11 +65,13 @@ def protected_div(x1, x2):
 # Define the operators
 pset = gep.PrimitiveSet('Main', input_names=['rho','rho_y','rho_yy','rho_3y'])
 pset.add_symbol_terminal('df_c', diffusion_coef)
+pset.add_symbol_terminal('Miu', miu)
 pset.add_function(operator.add, 2)
 pset.add_function(operator.sub, 2)
 pset.add_function(operator.mul, 2)
-pset.add_function(protected_div, 2)
+pset.add_function(operator.truediv, 2)
 pset.add_rnc_terminal() # Add random numerical constants (RNC).
+np.seterr(divide='raise')
 
 # %% Create the individual and population
 
@@ -76,27 +80,24 @@ creator.create("FitnessMin", base.Fitness, weights=(-1,))  # weights=(-1,)/weigh
 creator.create("Individual", gep.Chromosome, fitness=creator.FitnessMin) 
 
 # Register the individual and population creation operations
-h = 3            # head length
-n_genes = 1      # number of genes in a chromosome
-r = 3            # length of the RNC array
+h = 15            # head length
+n_genes = 2      # number of genes in a chromosome
+r = 15            # length of the RNC array
 enable_ls = True # whether to apply the linear scaling technique
 
 toolbox = gep.Toolbox()
 toolbox.register('rnc_gen', random.randint, a=-10, b=10)   # each RNC is random integer within [-10, 10]
 toolbox.register('gene_gen', gep.GeneDc, pset=pset, head_length=h, rnc_gen=toolbox.rnc_gen, rnc_array_length=r)
-toolbox.register('individual', creator.Individual, gene_gen=toolbox.gene_gen, n_genes=n_genes, linker=None)
+toolbox.register('individual', creator.Individual, gene_gen=toolbox.gene_gen, n_genes=n_genes, linker=operator.add)
 toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 toolbox.register('compile', gep.compile_, pset=pset)# Compile utility: which translates an individual into an executable function (Lambda)
 
-# %% Define the fitness evaluation function
-
-from numba import jit
+# %% Define the loss function
 
 # Register the dimensional verification operation
 toolbox.register('dimensional_verification', dg.dimensional_verification)
 
 # Define the loss for individuals that don't apply the linear scaling technique
-@jit
 def evaluate(individual):
     """Evalute the fitness of an individual: MAE (mean absolute error)"""
     func = toolbox.compile(individual)
@@ -108,7 +109,6 @@ def evaluate(individual):
     return np.mean(abs((Y - Yp)/Y)),
 
 # Define the loss for individuals that apply the linear scaling technique
-@jit
 def evaluate_ls(individual):
     """
     First verify whether the individuals satisfy dimensional homogeneity.
@@ -122,7 +122,14 @@ def evaluate_ls(individual):
         return 1000,
     else:
         func = toolbox.compile(individual)
-        Yp = np.array(list(map(func, rho,rho_y,rho_yy,rho_3y)))
+        try:
+            Yp = np.array(list(map(func, rho,rho_y,rho_yy,rho_3y)))
+        except FloatingPointError:
+            individual.a = 1e18
+            return 1000,
+        except ZeroDivisionError:
+            individual.a = 1e18
+            return 1000,
         if isinstance(Yp, np.ndarray):
             Q = (np.reshape(Yp, (-1, 1))).astype('float32')
             Q = np.nan_to_num(Q)
@@ -133,11 +140,6 @@ def evaluate_ls(individual):
             relative_error = (np.dot(Q,c)-Y)/Y
             if residuals.size > 0:
                 return np.mean(abs(relative_error)),
-
-            # Define the relative root mean square error (RRMSE)
-            # residuals is the sum of squared errors
-            # if residuals.size > 0:
-            #     return ((residuals[0])**0.5) / np.linalg.norm(Y, 2),
         
         # regarding the above special cases, the optimal linear scaling w.r.t LSM is just the mean of true target values
         individual.a = 0
@@ -177,8 +179,8 @@ stats.register("max", np.max)
 # %% Launch evolution
 
 # Define size of population and number of generations
-n_pop = 120              # Number of individuals in a population
-n_gen = 100             # Maximum Generation
+n_pop = 1660              # Number of individuals in a population
+n_gen = 200             # Maximum Generation
 tol = 1e-3               # Threshold to terminate the evolution
 output_type = 'Diffusion_equation_DHC-GEP'     # Name of the problem
 isRestart = False        # 'True'/'False' for initializing the population with given/random individuals.
@@ -199,43 +201,3 @@ hof = tools.HallOfFame(champs)
 start_time = time.time()
 pop, log = dg.gep_simple(pop, toolbox, n_generations=n_gen, n_elites=1,
                           stats=stats, hall_of_fame=hof, verbose=True,tolerance = tol,GEP_type = output_type)
-
-# %% Present our Work and Conclusions
-# print the No.1 best mathematical expression we found:
-
-elapsed = time.time() - start_time
-time_str = '%.2f' % (elapsed)
-
-best_ind = hof[0]
-symplified_best = gep.simplify(best_ind)
-
-if enable_ls:
-    symplified_best = best_ind.a * symplified_best
-
-key= f'When the evolution is terminated, with CPU running {time_str}s, \nOur No.1 best prediction is:'
-with open(f'output/real-time_output_{output_type}.dat', "a") as f:
-    f.write('\n'+ key+ str(symplified_best)+ '\n'+f'with error = {toolbox.evaluate(best_ind)[0]}'+'\n')
-# %% Present our Work and Conclusions
-# print the No.2 best mathematical expression we found:
-if str(gep.simplify(hof[1])) != str(gep.simplify(hof[0])):
-    best_ind = hof[1]
-    symplified_best = gep.simplify(best_ind)
-
-    if enable_ls:
-        symplified_best = best_ind.a * symplified_best
-
-    key= f'Our No.2 best prediction is:'
-    with open(f'output/real-time_output_{output_type}.dat', "a") as f:
-        f.write(key+ str(symplified_best)+ '\n'+f'with error = {toolbox.evaluate(best_ind)[0]}'+'\n')
-# %% Present our Work and Conclusions
-# print the No.3 best mathematical expression we found:
-if str(gep.simplify(hof[2])) != str(gep.simplify(hof[1])) and str(gep.simplify(hof[2])) != str(gep.simplify(hof[0])):
-    best_ind = hof[2]
-    symplified_best = gep.simplify(best_ind)
-
-    if enable_ls:
-        symplified_best = best_ind.a * symplified_best
-
-    key= f'Our No.3 best prediction is:'
-    with open(f'output/real-time_output_{output_type}.dat', "a") as f:
-        f.write( key+ str(symplified_best)+ '\n'+f'with error = {toolbox.evaluate(best_ind)[0]}'+'\n')

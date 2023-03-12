@@ -45,6 +45,8 @@ Y = train_data['Q']      # Target variable is the q_x.
 
 ga = 5.0/3.0     # \gamma
 ome = 1.0        # \omega 
+alpha = 1.0e0    # Weighting factor that controls the importance of the constraint of the second law of thermodynamics
+
 
 # %% Assign number tags
 
@@ -102,15 +104,12 @@ toolbox.register('individual', creator.Individual, gene_gen=toolbox.gene_gen, n_
 toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 toolbox.register('compile', gep.compile_, pset=pset)# Compile utility: which translates an individual into an executable function (Lambda)
 
-# %% Define the fitness evaluation function
-
-from numba import jit
+# %% Define the loss function
 
 # Register the dimensional verification operation
 toolbox.register('dimensional_verification', dg.dimensional_verification)
 
 # Define the loss for individuals that don't apply the linear scaling technique
-@jit
 def evaluate(individual):
     """Evalute the fitness of an individual: MAE (mean absolute error)"""
     func = toolbox.compile(individual)
@@ -122,7 +121,6 @@ def evaluate(individual):
     return np.mean(abs((Y - Yp)/Y)),
 
 # Define the loss for individuals that apply the linear scaling technique
-@jit
 def evaluate_ls(individual):
     """
     First verify whether the individuals satisfy dimensional homogeneity.
@@ -145,13 +143,36 @@ def evaluate_ls(individual):
             # Define the mean relative error (MRE)
             c = individual.a.reshape(-1,1)
             relative_error = (np.dot(Q,c)-Y)/Y
+            entropy_production = -np.dot(Q,c)*C_x
+            loss_2th_law = dg.count_negative_numbers(entropy_production)/len(entropy_production)
             if residuals.size > 0:
-                return np.mean(abs(relative_error)),
+                return np.mean(abs(relative_error))+alpha*loss_2th_law,
+        
+        # regarding the above special cases, the optimal linear scaling w.r.t LSM is just the mean of true target values
+        individual.a = 0
+        relative_error = (Y-individual.a)/Y
+        return np.mean(abs(relative_error)),
 
-            # Define the relative root mean square error (RRMSE)
-            # residuals is the sum of squared errors
-            # if residuals.size > 0:
-            #     return ((residuals[0])**0.5) / np.linalg.norm(Y, 2),
+def evaluate_ls_no_loss_entropy(individual):
+    """
+    First verify whether the individuals satisfy dimensional homogeneity.
+    If it is not dimensional homogeneous, we would identify it as an invalid individual and directly assign a significant error to it.
+    Otherwise, we would apply linear scaling (ls) to the individual, 
+    and then evaluate its loss: MRE (mean relative error)
+    """
+    if individual.a == 1e18:
+        return 1000,
+    else:
+        func = toolbox.compile(individual)
+        Yp = np.array(list(map(func, Kn_T, Kn_rho, u_x, R_x, C_x, u_xx, R_xx, C_xx, u_3x, R_3x, C_3x, R, C, Miu, Kai)))
+        if isinstance(Yp, np.ndarray):
+            Q = (np.reshape(Yp, (-1, 1))).astype('float32')
+            Q = np.nan_to_num(Q)
+
+            # Define the mean relative error (MRE)
+            c = individual.a.reshape(-1,1)
+            relative_error = (np.dot(Q,c)-Y)/Y
+            return np.mean(abs(relative_error)),
         
         # regarding the above special cases, the optimal linear scaling w.r.t LSM is just the mean of true target values
         individual.a = 0
@@ -160,6 +181,7 @@ def evaluate_ls(individual):
 
 if enable_ls:
     toolbox.register('evaluate', evaluate_ls)
+    toolbox.register('evaluate_ls_no_loss_entropy', evaluate_ls_no_loss_entropy)
 else:
     toolbox.register('evaluate', evaluate)
 
@@ -192,9 +214,9 @@ stats.register("max", np.max)
 
 # Define size of population and number of generations
 n_pop = 1660             # Number of individuals in a population
-n_gen = 4160             # Maximum Generation
+n_gen = 5900#4160             # Maximum Generation
 tol = 1e-3               # Threshold to terminate the evolution
-output_type = 'One_dimensional_shock'     # Name of the problem
+output_type = f'One_dimensional_shock_{alpha}'     # Name of the problem
 isRestart = False        # 'True'/'False' for initializing the population with given/random individuals.
 
 # If isRestart is 'True', read the given .pkl file to load the individuals as the first generation population.
@@ -213,43 +235,3 @@ hof = tools.HallOfFame(champs)
 start_time = time.time()
 pop, log = dg.gep_simple(pop, toolbox, n_generations=n_gen, n_elites=1,
                           stats=stats, hall_of_fame=hof, verbose=True,tolerance = tol,GEP_type = output_type)
-
-# %% Present our Work and Conclusions
-# print the No.1 best mathematical expression we found:
-
-elapsed = time.time() - start_time
-time_str = '%.2f' % (elapsed)
-
-best_ind = hof[0]
-symplified_best = gep.simplify(best_ind)
-
-if enable_ls:
-    symplified_best = best_ind.a * symplified_best
-
-key= f'When the evolution is terminated, with CPU running {time_str}s, \nOur No.1 best prediction is:'
-with open(f'output/real-time_output_{output_type}.dat', "a") as f:
-    f.write('\n'+ key+ str(symplified_best)+ '\n'+f'with error = {toolbox.evaluate(best_ind)[0]}'+'\n')
-# %% Present our Work and Conclusions
-# print the No.2 best mathematical expression we found:
-if str(gep.simplify(hof[1])) != str(gep.simplify(hof[0])):
-    best_ind = hof[1]
-    symplified_best = gep.simplify(best_ind)
-
-    if enable_ls:
-        symplified_best = best_ind.a * symplified_best
-
-    key= f'Our No.2 best prediction is:'
-    with open(f'output/real-time_output_{output_type}.dat', "a") as f:
-        f.write(key+ str(symplified_best)+ '\n'+f'with error = {toolbox.evaluate(best_ind)[0]}'+'\n')
-# %% Present our Work and Conclusions
-# print the No.3 best mathematical expression we found:
-if str(gep.simplify(hof[2])) != str(gep.simplify(hof[1])) and str(gep.simplify(hof[2])) != str(gep.simplify(hof[0])):
-    best_ind = hof[2]
-    symplified_best = gep.simplify(best_ind)
-
-    if enable_ls:
-        symplified_best = best_ind.a * symplified_best
-
-    key= f'Our No.3 best prediction is:'
-    with open(f'output/real-time_output_{output_type}.dat', "a") as f:
-        f.write( key+ str(symplified_best)+ '\n'+f'with error = {toolbox.evaluate(best_ind)[0]}'+'\n')

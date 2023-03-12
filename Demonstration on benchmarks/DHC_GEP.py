@@ -9,9 +9,7 @@ and real-time saving populations for restarting.
 
 from fractions import Fraction
 import os
-from numba import jit
 
-# @jit
 def dimensional_verification(individual, dict_of_dimension, target_dimension):
 
     def my_add(a,b):
@@ -53,9 +51,9 @@ def dimensional_verification(individual, dict_of_dimension, target_dimension):
 
         return a * b
 
-    def my_protected_div(a,b):
+    def my_truediv(a,b):
         
-        if isinstance(a,bool) or isinstance(b,bool):
+        if isinstance(a,bool) or isinstance(b,bool) or b == 0:
             return False
         if isinstance(a,int):
             a = Fraction(1)
@@ -64,7 +62,7 @@ def dimensional_verification(individual, dict_of_dimension, target_dimension):
 
         return a / b
     
-    individual_expr = individual.__str__().replace('\t','').replace('\n','').replace('add','my_add').replace('sub','my_sub').replace('mul','my_mul').replace('protected_div','my_protected_div')
+    individual_expr = individual.__str__().replace('\t','').replace('\n','').replace('add','my_add').replace('sub','my_sub').replace('mul','my_mul').replace('truediv','my_truediv')
     
     create_var = locals()
     create_var.update(dict_of_dimension)
@@ -186,31 +184,14 @@ def gep_simple(population, toolbox, n_generations=100, n_elites=1,
     is_exists = os.path.exists('output')
     if not is_exists:
         os.mkdir('output')
-
+    
+    simplified_best_list = []
     for gen in range(n_generations + 1):
         # evaluate: only evaluate the invalid ones, i.e., no need to reevaluate the unchanged ones
         invalid_individuals = [ind for ind in population if not ind.fitness.valid]
         fitnesses = toolbox.map(toolbox.evaluate, invalid_individuals)
         for ind, fit in zip(invalid_individuals, fitnesses):
             ind.fitness.values = fit
-        
-        # Termination criterion
-        if gen > 0 and gen % 100 == 0:
-            valid_individuals = [ind_test for ind_test in population if ind_test.fitness.valid]
-            fitnesses_test = toolbox.map(toolbox.evaluate, valid_individuals)
-            # print(fitnesses_test)
-            error = []
-            for ind_test, fit_test in zip(valid_individuals, fitnesses_test):
-                ind_test.fitness.values = fit_test
-                error.append(ind_test.fitness.values[0])
-            if min(error)<tolerance:
-                time_now = str(datetime.datetime.now())
-                pklFileName = time_now[:16].replace(':', '_').replace(' ', '_')
-                output_hal = open(f'pkl/tol_{GEP_type}.pkl', 'wb')
-                str_class = pickle.dumps(population)
-                output_hal.write(str_class)
-                output_hal.close()
-                break
 
         # record statistics and log
         if hall_of_fame is not None:
@@ -223,55 +204,59 @@ def gep_simple(population, toolbox, n_generations=100, n_elites=1,
         if gen == n_generations:
             break
 
-        # gep.simplify(population[0])
-
         # selection with elitism
         elites = deap.tools.selBest(population, k=n_elites)
         offspring = toolbox.select(population, len(population) - n_elites)
 
         # output the real-time result
-        if gen > 0 and gen % 1 == 0:
-            elapsed = time.time() - start_time
-            time_str = '%.2f' % (elapsed)
-            symplified_best_list = []
-            for elite_index in range(len(hall_of_fame)):
-                elites_IR = hall_of_fame[elite_index]   
-                if elites_IR.a != 1e18:
-                    if elite_index == 0:
-                        symplified_best = gep.simplify(elites_IR)
-                        symplified_best = elites_IR.a * symplified_best
-                        symplified_best_list.append(str(symplified_best))       
-                        key= f'In generation {gen}, with CPU running {time_str}s, \nOur No.1 best prediction is:'
-                        with open(f'output/real-time_output_{GEP_type}.dat', "a") as f:
-                            f.write('\n'+ key+ str(symplified_best)+ '\n'+f'with loss = {toolbox.evaluate(elites_IR)[0]}'+'\n')
-                    else:
-                        symplified_best = gep.simplify(elites_IR)
-                        symplified_best = elites_IR.a * symplified_best
-                        if str(symplified_best) not in symplified_best_list:
-                            symplified_best_list.append(str(symplified_best)) 
-                            key= f'Our No.{elite_index + 1} best prediction is:'
-                            with open(f'output/real-time_output_{GEP_type}.dat', "a") as f:
-                                f.write(key+ str(symplified_best)+ '\n'+f'with loss = {toolbox.evaluate(elites_IR)[0]}'+'\n')
-                else:
-                    if elite_index == 0:
-                        symplified_best = gep.simplify(elites_IR)
-                        symplified_best_list.append(str(symplified_best))
-                        key= f'In generation {gen}, with CPU running {time_str}s, \nOur No.1 best prediction 1 is:'
-                        with open(f'output/real-time_output_{GEP_type}.dat', "a") as f:
-                            f.write('\n'+ key+ str(symplified_best)+ '\n'+f'which is invalid!'+'\n' )
-                    else:
-                        symplified_best = gep.simplify(elites_IR)
-                        if str(symplified_best) not in symplified_best_list:
-                            symplified_best_list.append(str(symplified_best))  
-                            key= f'Our No.{elite_index + 1} best prediction is:'
-                            with open(f'output/real-time_output_{GEP_type}.dat', "a") as f:
-                                f.write(key+ str(symplified_best)+ '\n'+f'which is invalid!'+'\n')
-        # Write the populations to .pkl files
+        # Every 20 generations, the current optimal individual is checked, and if a new optimal individual appears, it is output to file.
         if gen > 0 and gen % 20 == 0:
-            output_hal = open(f'pkl/real-time_{GEP_type}.pkl', 'wb')
-            str_class = pickle.dumps(population)
-            output_hal.write(str_class)
-            output_hal.close()
+            elites_IR = elites[0]
+            simplified_best = gep.simplify(elites_IR)
+            if str(simplified_best) not in simplified_best_list:
+                simplified_best_list.append(str(simplified_best))
+                elapsed = time.time() - start_time
+                time_str = '%.2f' % (elapsed)   
+                if elites_IR.a != 1e18:
+                    simplified_best = elites_IR.a * simplified_best      
+                    key= f'In generation {gen}, with CPU running {time_str}s, \nOur No.1 best prediction is:'
+                    with open(f'output/{GEP_type}_equation.dat', "a") as f:
+                        f.write('\n'+ key+ str(simplified_best)+ '\n'+f'with loss = {elites_IR.fitness.values[0]}'+'\n')
+                else:
+                    key= f'In generation {gen}, with CPU running {time_str}s, \nOur No.1 best prediction 1 is:'
+                    with open(f'output/{GEP_type}_equation.dat', "a") as f:
+                        f.write('\n'+ key+ str(simplified_best)+ '\n'+f'which is invalid!'+'\n' )
+
+        # Termination criterion of error tolerance
+        if gen > 0 and gen % 100 == 0:
+            error_min = elites[0].fitness.values[0]
+            if error_min<tolerance:
+                time_now = str(datetime.datetime.now())
+                pklFileName = time_now[:16].replace(':', '_').replace(' ', '_')
+                output_hal = open(f'pkl/{GEP_type}.pkl', 'wb')
+                str_class = pickle.dumps(population)
+                output_hal.write(str_class)
+                output_hal.close()
+                break
+
+        # # Termination criterion of error reducing velocity
+        # # Compute the best individual every 500 generations, if the best 
+        # # one is the same with that of the 500 generations before, 
+        # # terminate the evolution immediately.
+        # if gen % 300 == 0:
+        #     elites_IR = elites[0]
+        #     middle_simplified_best = gep.simplify(elites_IR)
+        #     if gen == 0:
+        #         realtime_middle_simplified_best = middle_simplified_best
+        #     else:
+        #         if realtime_middle_simplified_best == middle_simplified_best:
+        #             output_hal = open(f'pkl/{GEP_type}.pkl', 'wb')
+        #             str_class = pickle.dumps(population)
+        #             output_hal.write(str_class)
+        #             output_hal.close()
+        #             break
+        #         else:
+        #             realtime_middle_simplified_best = middle_simplified_best
 
         # replication
         offspring = [toolbox.clone(ind) for ind in offspring]
@@ -291,7 +276,7 @@ def gep_simple(population, toolbox, n_generations=100, n_elites=1,
     
     time_now = str(datetime.datetime.now())
     pklFileName = time_now[:16].replace(':', '_').replace(' ', '_')
-    output_hal = open(f'pkl/gen_{GEP_type}.pkl', 'wb')
+    output_hal = open(f'pkl/{GEP_type}.pkl', 'wb')
     str_class = pickle.dumps(population)
     output_hal.write(str_class)
     output_hal.close()
